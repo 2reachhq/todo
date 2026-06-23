@@ -614,6 +614,30 @@ function App({session}){
           try{ const raw=localStorage.getItem(STORE_KEY); if(raw){ const p=JSON.parse(raw); if(p&&p.tasks) d=p; } }catch{}
           if(!d || !d.tasks) d = seed();
         }
+        // Eingang von Gmail-/Kalender-Scan & Claude übernehmen
+        try{
+          const {data:inbox}=await sb.from('todo_inbox').select('*').eq('processed',false).order('created_at',{ascending:true});
+          if(inbox && inbox.length){
+            const doneIds=[]; let nTask=0, nEv=0;
+            d.tasks = d.tasks||[]; d.events = d.events||[];
+            inbox.forEach(r=>{
+              const p=r.payload||{};
+              if(r.kind==='task'){
+                if(!(r.ext_id && d.tasks.some(x=>x.extId===r.ext_id))){
+                  d.tasks=[{id:uid(),projectId:null,title:p.title||'Aufgabe',done:false,desc:p.desc||'',links:p.links||[],notes:'',due:p.due||null,priority:!!p.priority,sub:[],createdAt:Date.now(),completedAt:null,source:p.source||'gmail',estMin:p.estMin||25,extId:r.ext_id||null},...d.tasks];
+                  nTask++;
+                }
+              } else if(r.kind==='event'){
+                const eid=p.id||r.ext_id||uid();
+                d.events=[...d.events.filter(e=>e.id!==eid),{id:eid,title:p.title||'Termin',date:p.date,start:p.start||'',end:p.end||'',source:'gcal',location:p.location||'',link:p.link||''}];
+                nEv++;
+              }
+              doneIds.push(r.id);
+            });
+            if(doneIds.length){ await sb.from('todo_inbox').update({processed:true}).in('id',doneIds); }
+            if(nTask||nEv) setTimeout(()=>setToast(`📥 ${nTask} neue Aufgabe(n)${nEv?` · ${nEv} Termin(e)`:''} übernommen`),300);
+          }
+        }catch(e){}
       }
       if(!('events' in d)) d.events = seedEvents();
       sigRef.current = JSON.stringify(d);
