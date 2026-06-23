@@ -96,6 +96,45 @@ const seed = () => ({ projects: [], tasks: [], events: [] });
 const load = () => { try { const r=localStorage.getItem(STORE_KEY); if(!r) return seed(); const s=JSON.parse(r); if(!('events' in s)) s.events = seedEvents(); return s; } catch { return seed(); } };
 const save = (s) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {} };
 
+/* Einmaliger Seed: Projekt „Helora — Launch" mit Hub-Task + Phasen (Subtasks) */
+function buildHeloraProject(){
+  const PID = 'p_helora';
+  const now = Date.now();
+  const mk = (title, desc, subs, opts={}) => ({
+    id: uid(), projectId: PID, title, done:false, desc: desc||'',
+    links: opts.links||[], notes:'', due: opts.due||null, priority: !!opts.priority,
+    sub: (subs||[]).map(s=>({id:uid(), title:s, done:false})),
+    createdAt: now, completedAt:null, source:'claude', estMin: opts.estMin||60, extId:null
+  });
+  const project = { id:PID, name:'Helora — Launch', emoji:'📞', color:'#FF8A5B',
+    desc:'KI-Telefonassistent für Restaurants. Domain: helora.io. Eigenständiges Produkt (Next.js + Supabase + Vapi + Stripe), getrennt von Finanz/To-Do.' };
+  const tasks = [
+    mk('🧭 Helora — Übersicht & Entscheidungen',
+      'Helora — KI-Telefonassistent für Restaurants.\nDomain: helora.io (gesichert).\nEigenständiges Produkt, getrennt von Finanz/To-Do.\n\nEntscheidungen: sauber neu bauen · Voice via Vapi · Kleingewerbe · Budget 100–300 €/Mon · Bezahlung via Stripe.\n\nStack: Next.js (Vercel) · Supabase · Vapi · Deepgram (STT) · Claude Haiku 4.5 (LLM) · Cartesia/ElevenLabs (TTS) · Twilio · Stripe · Resend.\n\nKosten: ~0,10–0,14 €/Anrufminute · ~0,30–0,45 € pro 3-Min-Bestellung · Fixkosten ~30–120 €/Mon.\n⚠️ Vor Launch: Überminutenpreise auf ≥0,18–0,20 €/Min anheben (liegen sonst unter Kosten).\n\nPläne: Starter 79€/300Min · Pro 149€/800Min · Business 299€/2000Min.',
+      ['Phase 0 — Setup','Phase 1 — App-Basis','Phase 2 — Voice-KI MVP','Phase 3 — Menü & Bestellseite','Phase 4 — Bezahlung','Phase 5 — Add-ons','Phase 6 — Recht & Sicherheit','Phase 7 — Beta','Phase 8 — Launch'],
+      {priority:true, estMin:30}),
+    mk('Phase 0 — Setup', 'Fundament & Zugänge.',
+      ['Name Helora ✓ / Domain helora.io ✓','Konten: Supabase, Vercel, Stripe, Vapi, Twilio, Resend, GitHub','Neues Git-Repo für Helora','Eigene Supabase-Instanz (nicht geteilt)','.env / Secrets festlegen']),
+    mk('Phase 1 — Echte App-Basis', 'Prototyp → echte App (Next.js + Supabase).',
+      ['Next.js aufsetzen, Prototyp-Design übernehmen','UI umbenennen: Serva → Helora','DB-Schema (restaurants, menu, orders, calls, team, plans…)','Login + Team-Rollen (Supabase Auth + RLS)','Logo-/Menübild-Upload (Storage)','Seiten an echte DB anbinden','Realtime: neue Bestellungen live','Deploy auf Vercel']),
+    mk('Phase 2 — Voice-KI MVP', 'Das Herzstück: KI nimmt echte Anrufe an.',
+      ['Vapi + Test-Nummer (DE)','System-Prompt + Menü → Wissensbasis','Bestellannahme-Flow (Abholung/Lieferung/Name)','Upselling-Logik','Meilenstein: 1 echter Anruf → Bestellung im Dashboard','2–3 Stimmen testen, beste wählen','DSGVO-Ansage am Gesprächsanfang','Transkripte/Status in DB']),
+    mk('Phase 3 — Menü & Bestellseite', 'Menü automatisch einlesen + Kunden-Bestellseite.',
+      ['Foto/PDF-Menü → Claude-Vision-OCR','Review-Schritt vor Übernahme','Bestellseite live (helora.io/slug), Warenkorb → Bestellung','Custom-Domain-Anbindung automatisieren','Branding (Logo/Farbe) auf Bestellseite']),
+    mk('Phase 4 — Bezahlung', 'Stripe-Abos + nutzungsbasierte Minuten.',
+      ['Stripe-Abos 79/149/299 €','Überminuten (metered) anbinden','⚠️ Überminutenpreise ≥ 0,18–0,20 €/Min','Stripe Checkout + Customer Portal','14-Tage-Trial','Minuten-Tracking pro Restaurant']),
+    mk('Phase 5 — Add-ons', 'Zusatzmodule.',
+      ['SMS-Warenkorb-Rettung (Twilio)','WhatsApp-Bestellung (Meta-Verifizierung)','später: Kassensystem-Anbindung','später: Online-Bezahlung Endkunden']),
+    mk('Phase 6 — Recht & Sicherheit', 'DSGVO / EU-AI-Act / Sicherheit.',
+      ['Impressum, Datenschutz, AGB','AVV mit allen Dienstleistern','EU-AI-Act: KI-Offenlegung','Anruf-Aufzeichnung DSGVO-konform','RLS, Backups, Zugriffsrechte']),
+    mk('Phase 7 — Beta', 'Pilot mit echten Restaurants.',
+      ['1–3 Pilot-Restaurants gewinnen','End-to-End mit echten Anrufen','Prompt/Stimme/Flow iterieren','Feedback + Bugfixing']),
+    mk('Phase 8 — Launch', 'Öffentlich gehen.',
+      ['Marketing-/Landingpage (helora.io)','Onboarding-Flow','Support-Kanal + Hilfe-Doku','Preise final, Abrechnung scharf schalten']),
+  ];
+  return { project, tasks };
+}
+
 /* Eingang (Gmail/Kalender/Claude) in den Datenstand einfügen — gibt neuen Stand + Zähler zurück.
    seenExt merkt sich DAUERHAFT, welche Mail/welcher Termin schon einmal übernommen wurde,
    damit Gelöschtes/Erledigtes NIE wieder auftaucht. */
@@ -688,6 +727,15 @@ function App({session}){
         d.events=(d.events||[]).filter(e=>{ if(se.has(e.id)) return false; se.add(e.id); return true; });
         d.seenExt=Array.from(new Set([...(d.seenExt||[]), ...d.tasks.filter(x=>x.extId).map(x=>x.extId)]));
         d.dedup1=true;
+      }
+      // Einmaliger Seed: Helora-Launch-Projekt anlegen
+      if(!d.heloraSeed){
+        if(!(d.projects||[]).some(p=>p.id==='p_helora')){
+          const h=buildHeloraProject();
+          d.projects=[...(d.projects||[]), h.project];
+          d.tasks=[...h.tasks, ...(d.tasks||[])];
+        }
+        d.heloraSeed=true;
       }
       sigRef.current = JSON.stringify(d);
       setState(d); setReady(true);
