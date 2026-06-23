@@ -28,6 +28,7 @@
     @keyframes slideIn { from { transform:translateX(24px); opacity:0 } to { transform:translateX(0); opacity:1 } }
     @keyframes popIn { from { transform:scale(.94); opacity:0 } to { transform:scale(1); opacity:1 } }
     @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.5 } }
+    @keyframes spin { to { transform: rotate(360deg) } }
     @keyframes checkPop { 0% { transform:scale(.5) } 60% { transform:scale(1.18) } 100% { transform:scale(1) } }
     .row-hover:hover { background: #1E1E1E !important; }
     .proj-hover:hover { background: rgba(255,255,255,0.05) !important; }
@@ -95,6 +96,25 @@ const seed = () => ({ projects: [], tasks: [], events: [] });
 const load = () => { try { const r=localStorage.getItem(STORE_KEY); if(!r) return seed(); const s=JSON.parse(r); if(!('events' in s)) s.events = seedEvents(); return s; } catch { return seed(); } };
 const save = (s) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {} };
 
+/* Eingang (Gmail/Kalender/Claude) in den Datenstand einfügen — gibt neuen Stand + Zähler zurück */
+function applyInbox(data, inbox){
+  const d = {...data, tasks:[...(data.tasks||[])], events:[...(data.events||[])]};
+  let nTask=0, nEv=0;
+  (inbox||[]).forEach(r=>{
+    const p=r.payload||{};
+    if(r.kind==='task'){
+      if(r.ext_id && d.tasks.some(x=>x.extId===r.ext_id)) return;
+      d.tasks=[{id:uid(),projectId:null,title:p.title||'Aufgabe',done:false,desc:p.desc||'',links:p.links||[],notes:'',due:p.due||null,priority:!!p.priority,sub:[],createdAt:Date.now(),completedAt:null,source:p.source||'gmail',estMin:p.estMin||25,extId:r.ext_id||null},...d.tasks];
+      nTask++;
+    } else if(r.kind==='event'){
+      const eid=p.id||r.ext_id||uid();
+      d.events=[...d.events.filter(e=>e.id!==eid),{id:eid,title:p.title||'Termin',date:p.date,start:p.start||'',end:p.end||'',source:'gcal',location:p.location||'',link:p.link||'',meet:p.meet||''}];
+      nEv++;
+    }
+  });
+  return {d,nTask,nEv};
+}
+
 /* ══════════════ Icons (inline SVG) ══════════════ */
 const Icon = ({d, size=18, stroke=2, fill='none', color='currentColor', style}) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" style={style}>{d}</svg>
@@ -116,6 +136,8 @@ const IcCoffee= (p)=><Icon {...p} d={<g><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><pat
 const IcClock = (p)=><Icon {...p} d={<g><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></g>}/>;
 const IcEdit  = (p)=><Icon {...p} d={<g><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></g>}/>;
 const IcMail  = (p)=><Icon {...p} d={<g><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,6 12,13 2,6"/></g>}/>;
+const IcRefresh=(p)=><Icon {...p} d={<g><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></g>}/>;
+const IcExt   =(p)=><Icon {...p} d={<g><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></g>}/>;
 const IcPin   = (p)=><Icon {...p} d={<g><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></g>}/>;
 
 /* ══════════════ Focus / Pomodoro Modal ══════════════ */
@@ -365,20 +387,28 @@ function DateField({value, onChange}){
 
 /* ── Calendar event card (Google Kalender) ── */
 function EventCard({ev}){
+  const href = ev.link || (ev.date? `https://calendar.google.com/calendar/u/0/r/day/${ev.date.split('-').join('/')}` : null);
   return (
-    <div style={{display:'flex',gap:13,padding:'12px 15px',borderRadius:12,background:C.bluL,border:'1px solid '+C.bdr,marginBottom:8}}>
+    <div className="row-hover" style={{display:'flex',gap:13,padding:'12px 15px',borderRadius:12,background:C.bluL,border:'1px solid '+C.bdr,marginBottom:8,alignItems:'center'}}>
       <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minWidth:48}}>
         <span style={{fontSize:14.5,fontWeight:700,color:C.blu,fontVariantNumeric:'tabular-nums'}}>{ev.start||'–'}</span>
         {ev.end && <span style={{fontSize:11,color:C.mut,fontVariantNumeric:'tabular-nums'}}>{ev.end}</span>}
       </div>
-      <div style={{width:1,background:C.bdrM}}/>
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:14.5,fontWeight:550,color:C.txt}}>{ev.title}</div>
+      <div style={{width:1,alignSelf:'stretch',background:C.bdrM}}/>
+      <a href={href||undefined} target={href?'_blank':undefined} title={href?'In Google Kalender öffnen':undefined}
+        style={{flex:1,minWidth:0,textDecoration:'none',cursor:href?'pointer':'default'}}>
+        <div style={{fontSize:14.5,fontWeight:550,color:C.txt,display:'flex',alignItems:'center',gap:7}}>
+          <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ev.title}</span>
+          {href && <IcExt size={13} color={C.mut}/>}
+        </div>
         <div style={{display:'flex',gap:12,marginTop:4,fontSize:11.5,color:C.mut,flexWrap:'wrap',alignItems:'center'}}>
           <span style={{color:C.blu,display:'flex',alignItems:'center',gap:4}}><IcCal size={11}/>Google Kalender</span>
           {ev.location && <span style={{display:'flex',alignItems:'center',gap:4}}><IcPin size={11}/>{ev.location}</span>}
         </div>
-      </div>
+      </a>
+      {ev.meet && <a href={ev.meet} target="_blank" title="Google Meet beitreten"
+        style={{flexShrink:0,display:'flex',alignItems:'center',gap:5,background:C.priL,color:C.pri,borderRadius:8,padding:'7px 11px',fontSize:12,fontWeight:600,textDecoration:'none'}}>
+        <IcExt size={13}/>Meet</a>}
     </div>
   );
 }
@@ -621,24 +651,9 @@ function App({session}){
         try{
           const {data:inbox}=await sb.from('todo_inbox').select('*').eq('processed',false).order('created_at',{ascending:true});
           if(inbox && inbox.length){
-            const doneIds=[]; let nTask=0, nEv=0;
-            d.tasks = d.tasks||[]; d.events = d.events||[];
-            inbox.forEach(r=>{
-              const p=r.payload||{};
-              if(r.kind==='task'){
-                if(!(r.ext_id && d.tasks.some(x=>x.extId===r.ext_id))){
-                  d.tasks=[{id:uid(),projectId:null,title:p.title||'Aufgabe',done:false,desc:p.desc||'',links:p.links||[],notes:'',due:p.due||null,priority:!!p.priority,sub:[],createdAt:Date.now(),completedAt:null,source:p.source||'gmail',estMin:p.estMin||25,extId:r.ext_id||null},...d.tasks];
-                  nTask++;
-                }
-              } else if(r.kind==='event'){
-                const eid=p.id||r.ext_id||uid();
-                d.events=[...d.events.filter(e=>e.id!==eid),{id:eid,title:p.title||'Termin',date:p.date,start:p.start||'',end:p.end||'',source:'gcal',location:p.location||'',link:p.link||''}];
-                nEv++;
-              }
-              doneIds.push(r.id);
-            });
-            if(doneIds.length){ await sb.from('todo_inbox').update({processed:true}).in('id',doneIds); }
-            if(nTask||nEv) setTimeout(()=>setToast(`📥 ${nTask} neue Aufgabe(n)${nEv?` · ${nEv} Termin(e)`:''} übernommen`),300);
+            const r=applyInbox(d, inbox); d=r.d;
+            await sb.from('todo_inbox').update({processed:true}).in('id',inbox.map(x=>x.id));
+            if(r.nTask||r.nEv) setTimeout(()=>setToast(`📥 ${r.nTask} neue Aufgabe(n)${r.nEv?` · ${r.nEv} Termin(e)`:''} übernommen`),300);
           }
         }catch(e){}
       }
@@ -705,6 +720,22 @@ function App({session}){
   const events = state.events||[];
   const projById = (id)=> projects.find(p=>p.id===id);
 
+  const [syncing,setSyncing]=useState(false);
+  const syncInbox = async () => {
+    if(syncing) return; setSyncing(true);
+    try{
+      const {data:inbox,error}=await sb.from('todo_inbox').select('*').eq('processed',false).order('created_at',{ascending:true});
+      if(error){ setToast('Aktualisieren fehlgeschlagen'); }
+      else if(!inbox || !inbox.length){ setToast('Schon aktuell ✓'); }
+      else {
+        const r=applyInbox(state, inbox); setState(r.d);
+        await sb.from('todo_inbox').update({processed:true}).in('id',inbox.map(x=>x.id));
+        setToast(`📥 ${r.nTask} Aufgabe(n)${r.nEv?` · ${r.nEv} Termin(e)`:''} übernommen`);
+      }
+    }catch(e){ setToast('Aktualisieren fehlgeschlagen'); }
+    setSyncing(false);
+  };
+
   const setTask = (nt) => setState(s=>({...s, tasks: s.tasks.map(x=>x.id===nt.id?nt:x)}));
   const toggle = (id) => setState(s=>({...s, tasks: s.tasks.map(x=>x.id===id?{...x,done:!x.done,completedAt:!x.done?Date.now():null}:x)}));
   const delTask = (id) => { setState(s=>({...s, tasks: s.tasks.filter(x=>x.id!==id)})); if(selId===id) setSelId(null); };
@@ -740,19 +771,26 @@ function App({session}){
       {/* Main */}
       <div style={{flex:1,minWidth:0,height:'100%',display:'flex',flexDirection:'column'}}>
         <div style={{padding:'24px 30px 16px',borderBottom:'1px solid '+C.sep}}>
-          <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:20}}>
-            <div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:20}}>
+            <div style={{minWidth:0}}>
               <h1 style={{fontSize:25,fontWeight:700,letterSpacing:'-0.025em',marginBottom:4}}>{viewMeta.t}</h1>
               {viewMeta.s && <div style={{fontSize:13.5,color:C.mut}}>{viewMeta.s}</div>}
             </div>
-            {view==='today' && totToday>0 &&
-              <div style={{textAlign:'right'}}>
-                <div style={{fontSize:12.5,color:C.mut,marginBottom:6}}>{doneToday} von {totToday} erledigt</div>
-                <div style={{width:160,height:7,background:C.surf3,borderRadius:4,overflow:'hidden'}}>
-                  <div style={{width:'100%',height:'100%',background:C.pri,borderRadius:4,transformOrigin:'left',transform:`scaleX(${pctToday/100})`,transition:'transform .4s ease'}}/>
-                </div>
-                {pctToday===100 && <div style={{fontSize:12,color:C.pri,marginTop:6,fontWeight:600}}>Alles erledigt! 🎉</div>}
-              </div>}
+            <div style={{display:'flex',alignItems:'center',gap:18,flexShrink:0}}>
+              {view==='today' && totToday>0 &&
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:12.5,color:C.mut,marginBottom:6}}>{doneToday} von {totToday} erledigt</div>
+                  <div style={{width:160,height:7,background:C.surf3,borderRadius:4,overflow:'hidden'}}>
+                    <div style={{width:'100%',height:'100%',background:C.pri,borderRadius:4,transformOrigin:'left',transform:`scaleX(${pctToday/100})`,transition:'transform .4s ease'}}/>
+                  </div>
+                  {pctToday===100 && <div style={{fontSize:12,color:C.pri,marginTop:6,fontWeight:600}}>Alles erledigt! 🎉</div>}
+                </div>}
+              <button onClick={syncInbox} disabled={syncing} title="Aktualisieren – neue Aufgaben & Termine holen"
+                style={{display:'flex',alignItems:'center',gap:7,background:C.surf2,border:'1px solid '+C.bdr,borderRadius:10,padding:'9px 14px',color:C.sub,fontSize:13,cursor:syncing?'default':'pointer',fontFamily:FONT}}>
+                <span style={{display:'flex',animation:syncing?'spin 1s linear infinite':'none'}}><IcRefresh size={15}/></span>
+                <span>{syncing?'Lädt…':'Aktualisieren'}</span>
+              </button>
+            </div>
           </div>
         </div>
 
