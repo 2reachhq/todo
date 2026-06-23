@@ -628,6 +628,7 @@ function App({session}){
   const [projModal, setProjModal] = useState(null);   // {project} | {new:true} | null
   const [quick, setQuick] = useState('');
   const [showDone, setShowDone] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [panelW, setPanelW] = useState(()=>{ const w=parseInt(localStorage.getItem('todo-panelw')); return (w&&w>=360)?w:440; });
   const savedRef = useRef(true);
   const sigRef = useRef('');
@@ -720,7 +721,6 @@ function App({session}){
   const events = state.events||[];
   const projById = (id)=> projects.find(p=>p.id===id);
 
-  const [syncing,setSyncing]=useState(false);
   const syncInbox = async () => {
     if(syncing) return; setSyncing(true);
     try{
