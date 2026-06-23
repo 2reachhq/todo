@@ -96,22 +96,30 @@ const seed = () => ({ projects: [], tasks: [], events: [] });
 const load = () => { try { const r=localStorage.getItem(STORE_KEY); if(!r) return seed(); const s=JSON.parse(r); if(!('events' in s)) s.events = seedEvents(); return s; } catch { return seed(); } };
 const save = (s) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {} };
 
-/* Eingang (Gmail/Kalender/Claude) in den Datenstand einfügen — gibt neuen Stand + Zähler zurück */
+/* Eingang (Gmail/Kalender/Claude) in den Datenstand einfügen — gibt neuen Stand + Zähler zurück.
+   seenExt merkt sich DAUERHAFT, welche Mail/welcher Termin schon einmal übernommen wurde,
+   damit Gelöschtes/Erledigtes NIE wieder auftaucht. */
 function applyInbox(data, inbox){
-  const d = {...data, tasks:[...(data.tasks||[])], events:[...(data.events||[])]};
+  const d = {...data, tasks:[...(data.tasks||[])], events:[...(data.events||[])], seenExt:[...(data.seenExt||[])]};
+  const seen = new Set(d.seenExt);
+  d.tasks.forEach(t=>{ if(t.extId) seen.add(t.extId); });   // bereits vorhandene gelten als gesehen
   let nTask=0, nEv=0;
   (inbox||[]).forEach(r=>{
     const p=r.payload||{};
     if(r.kind==='task'){
-      if(r.ext_id && d.tasks.some(x=>x.extId===r.ext_id)) return;
+      const key = r.ext_id || ('row:'+r.id);
+      if(seen.has(key)) return;                              // schon einmal übernommen → nie wieder
       d.tasks=[{id:uid(),projectId:null,title:p.title||'Aufgabe',done:false,desc:p.desc||'',links:p.links||[],notes:'',due:p.due||null,priority:!!p.priority,sub:[],createdAt:Date.now(),completedAt:null,source:p.source||'gmail',estMin:p.estMin||25,extId:r.ext_id||null},...d.tasks];
-      nTask++;
+      seen.add(key); nTask++;
     } else if(r.kind==='event'){
       const eid=p.id||r.ext_id||uid();
+      if(seen.has('ev:'+eid)) return;                        // einmal entfernter Termin bleibt entfernt
+      const exists = d.events.some(e=>e.id===eid);
       d.events=[...d.events.filter(e=>e.id!==eid),{id:eid,title:p.title||'Termin',date:p.date,start:p.start||'',end:p.end||'',source:'gcal',location:p.location||'',link:p.link||'',meet:p.meet||''}];
-      nEv++;
+      if(!exists) nEv++;
     }
   });
+  d.seenExt = Array.from(seen);
   return {d,nTask,nEv};
 }
 
@@ -665,6 +673,15 @@ function App({session}){
         d.tasks = (d.tasks||[]).filter(x=> x.projectId!=='p_demo' && !['Willkommen! Klick mich an ←','Task ohne Projekt landet im Eingang'].includes(x.title));
         d.events = (d.events||[]).filter(e=> e.id!=='__selftest__' && !['Team Sync','Mittagessen mit Kunde'].includes(e.title));
         d.cleaned1 = true;
+      }
+      // Einmalige Entdopplung + Aufbau der seenExt-Liste (gegen wiederkehrende Einträge)
+      if(!d.dedup1){
+        const st=new Set();
+        d.tasks=(d.tasks||[]).filter(x=>{ if(!x.extId) return true; if(st.has(x.extId)) return false; st.add(x.extId); return true; });
+        const se=new Set();
+        d.events=(d.events||[]).filter(e=>{ if(se.has(e.id)) return false; se.add(e.id); return true; });
+        d.seenExt=Array.from(new Set([...(d.seenExt||[]), ...d.tasks.filter(x=>x.extId).map(x=>x.extId)]));
+        d.dedup1=true;
       }
       sigRef.current = JSON.stringify(d);
       setState(d); setReady(true);
