@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>To-Do</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: #121212; overflow: hidden; }
+    * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+    input::placeholder, textarea::placeholder { color: rgba(235,235,245,0.22) !important; }
+    textarea { resize: none; }
+    button { transition: opacity .14s ease, background-color .14s ease, color .14s ease, transform .08s ease; }
+    button:hover:not(:disabled) { opacity: .85; }
+    button:active:not(:disabled) { transform: scale(.97); }
+    button:disabled { cursor: default; }
+    a { text-decoration: none; }
+    input, textarea { font-family: inherit; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2E2E2E; border-radius: 3px; }
+    @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+    @keyframes slideIn { from { transform:translateX(24px); opacity:0 } to { transform:translateX(0); opacity:1 } }
+    @keyframes popIn { from { transform:scale(.94); opacity:0 } to { transform:scale(1); opacity:1 } }
+    @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.5 } }
+    @keyframes checkPop { 0% { transform:scale(.5) } 60% { transform:scale(1.18) } 100% { transform:scale(1) } }
+    .row-hover:hover { background: #1E1E1E !important; }
+    .proj-hover:hover { background: rgba(255,255,255,0.05) !important; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo } = React;
+
+/* ══════════════ Supabase (gleiches Projekt wie SP Finanz) ══════════════ */
+const SB_URL = 'https://rlorfhpgxmyplmsgmkzw.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsb3JmaHBneG15cGxtc2dta3p3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNDgyOTgsImV4cCI6MjA5NzcyNDI5OH0.v40LI6zeyIgAzhnpqXxKAoqas8MDdXtEZz9nTNPC5jA';
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+
+/* ══════════════ Palette (SP Finanz) ══════════════ */
+const C = {
+  bg:'#121212', surf:'#1A1A1A', surf2:'#242424', surf3:'#2E2E2E',
+  bdr:'rgba(255,255,255,0.08)', bdrM:'rgba(255,255,255,0.14)',
+  pri:'#3ECF8E', priL:'rgba(62,207,142,0.14)', priD:'rgba(62,207,142,0.22)', priTxt:'#06190F',
+  red:'#FF5A5F', redL:'rgba(255,90,95,0.12)',
+  amb:'#FFB400', ambL:'rgba(255,180,0,0.12)',
+  blu:'#5B9DFF', bluL:'rgba(91,157,255,0.12)',
+  txt:'#FFFFFF', sub:'rgba(255,255,255,0.62)', mut:'rgba(255,255,255,0.40)', faint:'rgba(255,255,255,0.26)',
+  sep:'rgba(255,255,255,0.07)',
+};
+const FONT = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif";
+
+/* ══════════════ Helpers ══════════════ */
+const uid = () => Math.random().toString(36).slice(2,9);
+const todayStr = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const PROJECT_COLORS = ['#3ECF8E','#5B9DFF','#FFB400','#FF5A5F','#B57BFF','#FF8A5B','#4EC6C6','#F45BC0'];
+const EMOJIS = ['📁','💼','🏠','🚀','💡','📊','🎯','🛠️','📝','🎨','💰','📞','🌱','⚡','🔥','📚'];
+const MOTIVATION = [
+  'Du schaffst das. Ein Task nach dem anderen.',
+  'Fokus jetzt — Belohnung gleich.',
+  'Kleine Schritte, großer Fortschritt.',
+  'Bleib dran, du bist im Flow.',
+  'Jetzt durchziehen — du wirst stolz sein.',
+  'Konzentration an, Ablenkung aus.',
+  'Dieser eine Task. Voll dabei.',
+  'Du bist näher dran als du denkst.',
+];
+const DONE_MSG = ['Stark! 🎉','Erledigt! 💪','Gut gemacht! ✨','Weiter so! 🔥','Sauber! 👏'];
+
+const fmtDue = (due) => {
+  if(!due) return null;
+  const t = todayStr();
+  const d = new Date(due+'T00:00:00'), now = new Date(t+'T00:00:00');
+  const diff = Math.round((d-now)/86400000);
+  if(diff < 0) return {label: diff===-1?'Gestern':`${-diff} Tage überfällig`, color:C.red};
+  if(diff === 0) return {label:'Heute', color:C.pri};
+  if(diff === 1) return {label:'Morgen', color:C.amb};
+  if(diff < 7) return {label:['So','Mo','Di','Mi','Do','Fr','Sa'][d.getDay()]+'.', color:C.sub};
+  return {label: d.toLocaleDateString('de-DE',{day:'numeric',month:'short'}), color:C.sub};
+};
+const greeting = () => { const h=new Date().getHours(); return h<11?'Guten Morgen':h<18?'Guten Tag':'Guten Abend'; };
+
+/* ══════════════ Persistence ══════════════ */
+const STORE_KEY = 'todo-v1';
+const seedEvents = () => [
+  {id:uid(), title:'Team Sync', date:todayStr(), start:'10:00', end:'10:30', source:'gcal', location:'Google Meet', link:''},
+  {id:uid(), title:'Mittagessen mit Kunde', date:todayStr(), start:'12:30', end:'13:30', source:'gcal', location:'', link:''},
+];
+const seed = () => ({
+  projects: [
+    {id:'p_demo', name:'Beispiel-Projekt', emoji:'🚀', color:'#3ECF8E'},
+  ],
+  tasks: [
+    {id:uid(), projectId:'p_demo', title:'Willkommen! Klick mich an ←', done:false, desc:'Hier siehst du Beschreibung, Links, Notizen und das Datum. Probier den ▶ Start-Knopf für den Fokus-Timer.', links:[], notes:'', due:todayStr(), priority:true, sub:[{id:uid(),title:'Auf den Kreis klicken = erledigt',done:false},{id:uid(),title:'Auf ▶ klicken = Fokus starten',done:false}], createdAt:Date.now(), completedAt:null, source:'manual', estMin:25},
+    {id:uid(), projectId:null, title:'Task ohne Projekt landet im Eingang', done:false, desc:'', links:[], notes:'', due:null, priority:false, sub:[], createdAt:Date.now(), completedAt:null, source:'manual', estMin:25},
+  ],
+  events: seedEvents(),
+});
+const load = () => { try { const r=localStorage.getItem(STORE_KEY); if(!r) return seed(); const s=JSON.parse(r); if(!('events' in s)) s.events = seedEvents(); return s; } catch { return seed(); } };
+const save = (s) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {} };
+
+/* ══════════════ Icons (inline SVG) ══════════════ */
+const Icon = ({d, size=18, stroke=2, fill='none', color='currentColor', style}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" style={style}>{d}</svg>
+);
+const IcPlay  = (p)=><Icon {...p} d={<polygon points="6 4 20 12 6 20 6 4" fill="currentColor" stroke="none"/>}/>;
+const IcCheck = (p)=><Icon {...p} d={<polyline points="20 6 9 17 4 12"/>}/>;
+const IcChevron = (p)=><Icon {...p} d={<polyline points="9 18 15 12 9 6"/>}/>;
+const IcPlus  = (p)=><Icon {...p} d={<g><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></g>}/>;
+const IcX     = (p)=><Icon {...p} d={<g><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></g>}/>;
+const IcTrash = (p)=><Icon {...p} d={<g><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></g>}/>;
+const IcCal   = (p)=><Icon {...p} d={<g><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></g>}/>;
+const IcLink  = (p)=><Icon {...p} d={<g><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></g>}/>;
+const IcFlag  = (p)=><Icon {...p} d={<g><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></g>}/>;
+const IcInbox = (p)=><Icon {...p} d={<g><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></g>}/>;
+const IcSun   = (p)=><Icon {...p} d={<g><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/></g>}/>;
+const IcStack = (p)=><Icon {...p} d={<g><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/></g>}/>;
+const IcPause = (p)=><Icon {...p} d={<g><rect x="6" y="4" width="4" height="16" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" fill="currentColor" stroke="none"/></g>}/>;
+const IcCoffee= (p)=><Icon {...p} d={<g><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></g>}/>;
+const IcClock = (p)=><Icon {...p} d={<g><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></g>}/>;
+const IcPin   = (p)=><Icon {...p} d={<g><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></g>}/>;
+
+/* ══════════════ Focus / Pomodoro Modal ══════════════ */
+function FocusModal({task, onClose, onComplete}){
+  const [phase, setPhase] = useState('work');        // work | break | done
+  const [total, setTotal] = useState((task.estMin||25)*60);
+  const [left, setLeft]   = useState((task.estMin||25)*60);
+  const [running, setRunning] = useState(true);
+  const [msg] = useState(MOTIVATION[Math.floor((task.title.length+Date.now())%MOTIVATION.length)]);
+  const tick = useRef();
+
+  useEffect(()=>{
+    if(!running) return;
+    tick.current = setInterval(()=> setLeft(l=>{
+      if(l<=1){ clearInterval(tick.current); setRunning(false); setPhase(p=> p==='work'?'break':'done'); return 0; }
+      return l-1;
+    }), 1000);
+    return ()=>clearInterval(tick.current);
+  },[running, phase]);
+
+  const startBreak = () => { const b=5*60; setTotal(b); setLeft(b); setPhase('break'); setRunning(true); };
+  const mm = String(Math.floor(left/60)).padStart(2,'0'), ss = String(left%60).padStart(2,'0');
+  const pct = total? (1 - left/total) : 0;
+  const R=130, CIRC=2*Math.PI*R;
+  const accent = phase==='break'? C.blu : C.pri;
+
+  return (
+    <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.78)',backdropFilter:'blur(8px)',zIndex:100,display:'flex',alignItems:'center',justifyContent:'center',animation:'fadeIn .2s ease'}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:440,maxWidth:'92vw',background:C.surf,border:'1px solid '+C.bdr,borderRadius:28,padding:'38px 34px',textAlign:'center',animation:'popIn .25s ease'}}>
+        <div style={{fontSize:12,fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',color:accent,marginBottom:6}}>
+          {phase==='work'? 'Fokus-Modus' : phase==='break'? 'Pause' : 'Geschafft'}
+        </div>
+        <div style={{fontSize:19,fontWeight:600,color:C.txt,marginBottom:28,lineHeight:1.3}}>
+          {phase==='done'? 'Block vorbei – starke Arbeit!' : task.title}
+        </div>
+
+        <div style={{position:'relative',width:300,height:300,margin:'0 auto'}}>
+          <svg width="300" height="300" style={{transform:'rotate(-90deg)'}}>
+            <circle cx="150" cy="150" r={R} fill="none" stroke={C.surf3} strokeWidth="14"/>
+            <circle cx="150" cy="150" r={R} fill="none" stroke={accent} strokeWidth="14" strokeLinecap="round"
+              strokeDasharray={CIRC} strokeDashoffset={CIRC*(1-pct)} style={{transition:'stroke-dashoffset 1s linear'}}/>
+          </svg>
+          <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+            <div style={{fontSize:64,fontWeight:700,color:C.txt,fontVariantNumeric:'tabular-nums',letterSpacing:'-0.02em'}}>
+              {phase==='done'? '✓' : `${mm}:${ss}`}
+            </div>
+            <div style={{fontSize:13,color:C.mut,marginTop:2,maxWidth:200,lineHeight:1.4}}>
+              {phase==='work'? msg : phase==='break'? 'Kurz durchatmen ☕' : DONE_MSG[Math.floor(left%DONE_MSG.length)]}
+            </div>
+          </div>
+        </div>
+
+        <div style={{display:'flex',gap:10,justifyContent:'center',marginTop:30}}>
+          {phase==='work' && <>
+            <button onClick={()=>setRunning(r=>!r)} style={{...btnGhost, minWidth:120}}>
+              {running? <IcPause size={16}/> : <IcPlay size={16}/>}<span>{running?'Pause':'Weiter'}</span>
+            </button>
+            <button onClick={()=>{onComplete(task.id); onClose();}} style={{...btnPri, minWidth:120}}>
+              <IcCheck size={16} stroke={2.4}/><span>Erledigt</span>
+            </button>
+          </>}
+          {phase==='break' && <>
+            <button onClick={onClose} style={{...btnGhost, minWidth:120}}>Beenden</button>
+            <button onClick={()=>{setRunning(false); setPhase('done');}} style={{...btnPri, minWidth:120}}>Pause überspringen</button>
+          </>}
+          {phase==='work' && left===0 ? null : null}
+        </div>
+
+        {phase==='work' && !running && left>0 &&
+          <div style={{marginTop:14,fontSize:12,color:C.faint}}>Timer pausiert</div>}
+        {phase==='break' &&
+          <div style={{marginTop:14,fontSize:12.5,color:C.blu,display:'flex',alignItems:'center',gap:6,justifyContent:'center'}}>
+            <IcCoffee size={15}/> 5 Minuten Pause läuft
+          </div>}
+
+        {phase==='done' && <>
+          <button onClick={()=>{onComplete(task.id); onClose();}} style={{...btnPri, width:'100%', marginTop:10, justifyContent:'center'}}>
+            <IcCheck size={17} stroke={2.4}/><span>Task abhaken & schließen</span>
+          </button>
+          <button onClick={onClose} style={{...btnGhost, width:'100%', marginTop:10, justifyContent:'center'}}>Nur schließen</button>
+        </>}
+
+        {phase==='work' && left===0 &&
+          <button onClick={startBreak} style={{...btnBlu, width:'100%', marginTop:12, justifyContent:'center'}}>
+            <IcCoffee size={16}/><span>Pause starten (5 Min)</span>
+          </button>}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════ Task Detail Panel ══════════════ */
+function Detail({task, project, onChange, onClose, onDelete, onFocus, width, onResize}){
+  const [linkInput, setLinkInput] = useState('');
+  const set = (patch) => onChange({...task, ...patch});
+  const startResize = (e) => {
+    e.preventDefault();
+    const move = (ev) => onResize(Math.min(820, Math.max(360, window.innerWidth - ev.clientX)));
+    const up = () => { document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); document.body.style.cursor=''; document.body.style.userSelect=''; };
+    document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
+    document.body.style.cursor='col-resize'; document.body.style.userSelect='none';
+  };
+  const wide = width>=560;
+  const addLink = () => {
+    let u = linkInput.trim(); if(!u) return;
+    if(!/^https?:\/\//.test(u)) u='https://'+u;
+    set({links:[...(task.links||[]), u]}); setLinkInput('');
+  };
+  return (
+    <div style={{position:'relative',width,flexShrink:0,height:'100%',background:C.surf,borderLeft:'1px solid '+C.bdr,display:'flex',flexDirection:'column',animation:'slideIn .22s ease'}}>
+      <div onMouseDown={startResize} title="Zum Verbreitern ziehen"
+        style={{position:'absolute',left:-4,top:0,bottom:0,width:8,cursor:'col-resize',zIndex:10}}
+        onMouseEnter={e=>e.currentTarget.firstChild.style.opacity=1} onMouseLeave={e=>e.currentTarget.firstChild.style.opacity=0}>
+        <div style={{position:'absolute',left:3,top:0,bottom:0,width:2,background:C.pri,opacity:0,transition:'opacity .15s'}}/>
+      </div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 18px',borderBottom:'1px solid '+C.sep}}>
+        <span style={{fontSize:12.5,color:C.mut,display:'flex',alignItems:'center',gap:7}}>
+          {project? <><span>{project.emoji}</span><span>{project.name}</span></> : <><IcInbox size={14}/><span>Eingang</span></>}
+        </span>
+        <div style={{display:'flex',gap:4}}>
+          <button onClick={()=>onDelete(task.id)} style={iconBtn} title="Löschen"><IcTrash size={16} color={C.mut}/></button>
+          <button onClick={onClose} style={iconBtn} title="Schließen"><IcX size={18} color={C.mut}/></button>
+        </div>
+      </div>
+
+      <div style={{flex:1,overflowY:'auto',padding: wide?'26px 40px':'18px',maxWidth:760,width:'100%',margin:'0 auto'}}>
+        <div style={{display:'flex',gap:wide?13:10,alignItems:'flex-start',marginBottom:wide?20:16}}>
+          <Circle done={task.done} onClick={()=>set({done:!task.done, completedAt: !task.done?Date.now():null})} size={wide?26:24}/>
+          <textarea value={task.title} onChange={e=>set({title:e.target.value})} rows={1}
+            style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.txt,fontSize:wide?24:17,fontWeight:700,letterSpacing:'-0.02em',lineHeight:1.3,resize:'none',marginTop:wide?1:0,
+              textDecoration: task.done?'line-through':'none', opacity: task.done?.5:1}}
+            onInput={e=>{e.target.style.height='auto';e.target.style.height=e.target.scrollHeight+'px';}}/>
+        </div>
+
+        <button onClick={()=>onFocus(task)} style={{...btnPri, width:'100%', justifyContent:'center', marginBottom:18, padding:'11px'}}>
+          <IcPlay size={15}/><span>Fokus starten · {task.estMin||25} Min</span>
+        </button>
+
+        {/* Meta row */}
+        <div style={{display:'flex',gap:8,marginBottom:18,flexWrap:'wrap'}}>
+          <DateField value={task.due} onChange={v=>set({due:v})}/>
+          <button onClick={()=>set({priority:!task.priority})} style={{...chip, borderColor: task.priority?C.amb:C.bdr, color: task.priority?C.amb:C.sub}}>
+            <IcFlag size={14} color={task.priority?C.amb:C.mut}/><span>Wichtig</span>
+          </button>
+          <label style={{...chip}}>
+            <span style={{color:C.mut}}>⏱</span>
+            <input type="number" min="5" max="120" step="5" value={task.estMin||25} onChange={e=>set({estMin:parseInt(e.target.value)||25})}
+              style={{width:30,background:'transparent',border:'none',outline:'none',color:C.sub,fontSize:12.5}}/>
+            <span style={{color:C.mut,fontSize:11}}>Min</span>
+          </label>
+        </div>
+
+        {/* Subtasks */}
+        <Section label={`Subtasks${task.sub?.length?` · ${task.sub.filter(s=>s.done).length}/${task.sub.length}`:''}`}>
+          {(task.sub||[]).map(s=>(
+            <div key={s.id} className="row-hover" style={{display:'flex',alignItems:'center',gap:9,padding:'5px 6px',borderRadius:8,marginLeft:-6}}>
+              <Circle done={s.done} size={17} onClick={()=>set({sub:task.sub.map(x=>x.id===s.id?{...x,done:!x.done}:x)})}/>
+              <input value={s.title} onChange={e=>set({sub:task.sub.map(x=>x.id===s.id?{...x,title:e.target.value}:x)})}
+                style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.txt,fontSize:13.5,textDecoration:s.done?'line-through':'none',opacity:s.done?.45:1}}/>
+              <button onClick={()=>set({sub:task.sub.filter(x=>x.id!==s.id)})} style={{...iconBtn,padding:3}}><IcX size={13} color={C.faint}/></button>
+            </div>
+          ))}
+          <AddInline placeholder="Subtask hinzufügen" onAdd={t=>set({sub:[...(task.sub||[]),{id:uid(),title:t,done:false}]})}/>
+        </Section>
+
+        {/* Description */}
+        <Section label="Beschreibung">
+          <textarea value={task.desc||''} onChange={e=>{set({desc:e.target.value}); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px';}}
+            placeholder="Notiz, Kontext, Details …" rows={3}
+            style={{width:'100%',background:C.surf2,border:'1px solid '+C.bdr,borderRadius:10,padding:'10px 12px',color:C.txt,fontSize:13.5,lineHeight:1.5,outline:'none',minHeight:70}}/>
+        </Section>
+
+        {/* Links */}
+        <Section label="Links">
+          {(task.links||[]).map((l,i)=>(
+            <div key={i} className="row-hover" style={{display:'flex',alignItems:'center',gap:8,padding:'7px 8px',borderRadius:8,marginLeft:-8}}>
+              <IcLink size={14} color={C.pri}/>
+              <a href={l} target="_blank" style={{flex:1,color:C.blu,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.replace(/^https?:\/\//,'')}</a>
+              <button onClick={()=>set({links:task.links.filter((_,j)=>j!==i)})} style={{...iconBtn,padding:3}}><IcX size={13} color={C.faint}/></button>
+            </div>
+          ))}
+          <div style={{display:'flex',gap:6,marginTop:4}}>
+            <input value={linkInput} onChange={e=>setLinkInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addLink()}
+              placeholder="Link einfügen …" style={{flex:1,background:C.surf2,border:'1px solid '+C.bdr,borderRadius:8,padding:'8px 11px',color:C.txt,fontSize:13,outline:'none'}}/>
+            <button onClick={addLink} style={{...btnGhost,padding:'8px 12px'}}><IcPlus size={15}/></button>
+          </div>
+        </Section>
+
+        <div style={{fontSize:11,color:C.faint,marginTop:18,display:'flex',alignItems:'center',gap:6}}>
+          {task.source==='gmail'&&<span style={{color:C.red}}>✉ aus Gmail</span>}
+          {task.source==='claude'&&<span style={{color:C.pri}}>✦ von Claude</span>}
+          <span>erstellt {new Date(task.createdAt).toLocaleDateString('de-DE')}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const Section = ({label, children}) => (
+  <div style={{marginBottom:20}}>
+    <div style={{fontSize:11,fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:C.faint,marginBottom:9}}>{label}</div>
+    {children}
+  </div>
+);
+const AddInline = ({placeholder, onAdd}) => {
+  const [v,setV]=useState('');
+  return <div style={{display:'flex',alignItems:'center',gap:9,padding:'5px 6px',marginLeft:-6}}>
+    <IcPlus size={15} color={C.faint}/>
+    <input value={v} onChange={e=>setV(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&v.trim()){onAdd(v.trim());setV('');}}}
+      placeholder={placeholder} style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.txt,fontSize:13.5}}/>
+  </div>;
+};
+
+/* ── Date field with quick presets ── */
+const plusDays = (n) => { const d=new Date(); d.setDate(d.getDate()+n); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+function DateField({value, onChange}){
+  const [open,setOpen]=useState(false);
+  const due = fmtDue(value);
+  const ref = useRef();
+  useEffect(()=>{ if(!open) return; const h=e=>{ if(ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener('mousedown',h); return ()=>document.removeEventListener('mousedown',h); },[open]);
+  const set = (v)=>{ onChange(v); setOpen(false); };
+  return (
+    <div ref={ref} style={{position:'relative'}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{...chip, borderColor: due?C.bdrM:C.bdr, color: due?due.color:C.sub}}>
+        <IcCal size={14} color={due?due.color:C.mut}/><span>{due?due.label:'Datum'}</span>
+      </button>
+      {open &&
+        <div style={{position:'absolute',top:'112%',left:0,zIndex:30,background:C.surf2,border:'1px solid '+C.bdrM,borderRadius:13,padding:7,width:210,boxShadow:'0 12px 34px rgba(0,0,0,.55)',animation:'popIn .14s ease'}}>
+          {[['Heute',plusDays(0),'🟢'],['Morgen',plusDays(1),'🌅'],['In 3 Tagen',plusDays(3),'📆'],['Nächste Woche',plusDays(7),'🗓️']].map(([l,v,e])=>(
+            <button key={l} onClick={()=>set(v)} className="proj-hover" style={{display:'flex',alignItems:'center',gap:9,width:'100%',background:'none',border:'none',color:C.txt,fontSize:13.5,padding:'8px 9px',borderRadius:8,cursor:'pointer',fontFamily:FONT,textAlign:'left'}}>
+              <span style={{fontSize:13}}>{e}</span><span style={{flex:1}}>{l}</span><span style={{color:C.mut,fontSize:11}}>{fmtDue(v).label}</span>
+            </button>
+          ))}
+          <div style={{borderTop:'1px solid '+C.sep,margin:'6px 4px'}}/>
+          <input type="date" value={value||''} onChange={e=>set(e.target.value||null)}
+            style={{width:'100%',background:C.surf3,border:'1px solid '+C.bdr,borderRadius:8,padding:'8px 9px',color:C.txt,fontSize:13,outline:'none',colorScheme:'dark',fontFamily:FONT}}/>
+          {value && <button onClick={()=>set(null)} style={{width:'100%',background:'none',border:'none',color:C.red,fontSize:12.5,padding:'8px',cursor:'pointer',marginTop:2,fontFamily:FONT}}>Datum entfernen</button>}
+        </div>}
+    </div>
+  );
+}
+
+/* ── Calendar event card (Google Kalender) ── */
+function EventCard({ev}){
+  return (
+    <div style={{display:'flex',gap:13,padding:'12px 15px',borderRadius:12,background:C.bluL,border:'1px solid '+C.bdr,marginBottom:8}}>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minWidth:48}}>
+        <span style={{fontSize:14.5,fontWeight:700,color:C.blu,fontVariantNumeric:'tabular-nums'}}>{ev.start||'–'}</span>
+        {ev.end && <span style={{fontSize:11,color:C.mut,fontVariantNumeric:'tabular-nums'}}>{ev.end}</span>}
+      </div>
+      <div style={{width:1,background:C.bdrM}}/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:14.5,fontWeight:550,color:C.txt}}>{ev.title}</div>
+        <div style={{display:'flex',gap:12,marginTop:4,fontSize:11.5,color:C.mut,flexWrap:'wrap',alignItems:'center'}}>
+          <span style={{color:C.blu,display:'flex',alignItems:'center',gap:4}}><IcCal size={11}/>Google Kalender</span>
+          {ev.location && <span style={{display:'flex',alignItems:'center',gap:4}}><IcPin size={11}/>{ev.location}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Termine view (grouped by day) ── */
+function CalendarView({events, t}){
+  const upcoming = (events||[]).filter(e=>e.date>=t).sort((a,b)=> a.date===b.date? (a.start||'').localeCompare(b.start||'') : a.date.localeCompare(b.date));
+  const groups = {};
+  upcoming.forEach(e=>{ (groups[e.date]=groups[e.date]||[]).push(e); });
+  const dates = Object.keys(groups).sort();
+  const label = (d)=>{ const due=fmtDue(d); const dd=new Date(d+'T00:00:00'); return (due&&['Heute','Morgen'].includes(due.label))? due.label : dd.toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long'}); };
+  return (
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:11,padding:'13px 15px',background:C.bluL,border:'1px solid '+C.bdr,borderRadius:12,marginBottom:20}}>
+        <div style={{width:34,height:34,borderRadius:9,background:C.surf,display:'flex',alignItems:'center',justifyContent:'center'}}><IcCal size={18} color={C.blu}/></div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:13.5,color:C.txt,fontWeight:600}}>Google Kalender</div>
+          <div style={{fontSize:12,color:C.mut}}>Termine erscheinen hier · Live-Sync folgt mit dem Deploy</div>
+        </div>
+      </div>
+      {dates.length===0 &&
+        <div style={{textAlign:'center',padding:'60px 20px',color:C.faint}}><div style={{fontSize:40,marginBottom:10}}>📅</div><div style={{fontSize:14.5,color:C.sub}}>Keine kommenden Termine.</div></div>}
+      {dates.map(d=>(
+        <div key={d} style={{marginBottom:22}}>
+          <div style={{fontSize:12.5,fontWeight:600,color:C.sub,marginBottom:10,textTransform:'capitalize'}}>{label(d)}</div>
+          {groups[d].map(ev=><EventCard key={ev.id} ev={ev}/>)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ══════════════ Checkbox circle ══════════════ */
+const Circle = ({done, onClick, size=20}) => (
+  <button onClick={onClick} style={{flexShrink:0,width:size,height:size,borderRadius:'50%',border:'2px solid '+(done?C.pri:C.bdrM),
+    background: done?C.pri:'transparent',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',padding:0,
+    animation: done?'checkPop .3s ease':'none'}}>
+    {done && <IcCheck size={size*0.6} color={C.priTxt} stroke={3}/>}
+  </button>
+);
+
+/* ══════════════ Task Row ══════════════ */
+function TaskRow({task, project, active, onToggle, onClick, onFocus}){
+  const due = fmtDue(task.due);
+  const subDone = task.sub?.filter(s=>s.done).length||0, subTot = task.sub?.length||0;
+  return (
+    <div onClick={onClick} className="row-hover" style={{display:'flex',alignItems:'center',gap:12,padding:'12px 14px',borderRadius:12,cursor:'pointer',
+      background: active?C.surf2:'transparent', border:'1px solid '+(active?C.bdr:'transparent')}}>
+      <Circle done={task.done} onClick={(e)=>{e.stopPropagation(); onToggle();}}/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          {task.priority && !task.done && <IcFlag size={13} color={C.amb} fill={C.amb}/>}
+          <span style={{fontSize:14.5,color: task.done?C.faint:C.txt, textDecoration: task.done?'line-through':'none', overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:450}}>{task.title}</span>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:11,marginTop:4,flexWrap:'wrap'}}>
+          {project && <span style={{fontSize:11.5,color:C.mut,display:'flex',alignItems:'center',gap:4}}><span style={{width:7,height:7,borderRadius:'50%',background:project.color,display:'inline-block'}}></span>{project.name}</span>}
+          {due && <span style={{fontSize:11.5,color:due.color,display:'flex',alignItems:'center',gap:4}}><IcCal size={11}/>{due.label}</span>}
+          {subTot>0 && <span style={{fontSize:11.5,color:C.mut,display:'flex',alignItems:'center',gap:4}}><IcStack size={11}/>{subDone}/{subTot}</span>}
+          {task.links?.length>0 && <span style={{fontSize:11.5,color:C.mut,display:'flex',alignItems:'center',gap:3}}><IcLink size={11}/>{task.links.length}</span>}
+          {task.source==='gmail' && <span style={{fontSize:11,color:C.red}}>✉</span>}
+          {task.source==='claude' && <span style={{fontSize:11,color:C.pri}}>✦</span>}
+        </div>
+      </div>
+      {!task.done &&
+        <button onClick={e=>{e.stopPropagation(); onFocus(task);}} title="Fokus starten"
+          style={{flexShrink:0,width:34,height:34,borderRadius:9,background:C.priL,border:'none',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}>
+          <IcPlay size={14} color={C.pri}/>
+        </button>}
+    </div>
+  );
+}
+
+/* ══════════════ Sidebar ══════════════ */
+function Sidebar({view, setView, projects, tasks, events, session, onAddProject, onEditProject}){
+  const count = (fn)=> tasks.filter(t=>!t.done && fn(t)).length;
+  const t = todayStr();
+  const views = [
+    {id:'today', label:'Heute', icon:IcSun, color:C.pri, n: count(x=> x.due && x.due<=t)},
+    {id:'upcoming', label:'Demnächst', icon:IcCal, color:C.blu, n: count(x=> x.due && x.due>t)},
+    {id:'calendar', label:'Termine', icon:IcClock, color:C.blu, n: (events||[]).filter(e=>e.date>=t).length},
+    {id:'important', label:'Wichtig', icon:IcFlag, color:C.amb, n: count(x=> x.priority)},
+    {id:'inbox', label:'Eingang', icon:IcInbox, color:C.sub, n: count(x=> !x.projectId)},
+    {id:'all', label:'Alle', icon:IcStack, color:C.sub, n: count(()=>true)},
+  ];
+  return (
+    <div style={{width:248,flexShrink:0,height:'100%',background:C.bg,borderRight:'1px solid '+C.sep,display:'flex',flexDirection:'column',padding:'18px 12px'}}>
+      <div style={{display:'flex',alignItems:'center',gap:9,padding:'4px 8px 16px'}}>
+        <div style={{width:30,height:30,borderRadius:9,background:C.pri,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <IcCheck size={18} color={C.priTxt} stroke={3}/>
+        </div>
+        <span style={{fontSize:17,fontWeight:700,color:C.txt,letterSpacing:'-0.02em'}}>To-Do</span>
+      </div>
+
+      {views.map(v=>(
+        <button key={v.id} onClick={()=>setView(v.id)} className="proj-hover" style={{display:'flex',alignItems:'center',gap:11,padding:'9px 10px',borderRadius:10,border:'none',
+          background: view===v.id?C.surf2:'transparent', cursor:'pointer',marginBottom:2,width:'100%',textAlign:'left'}}>
+          <v.icon size={17} color={view===v.id?v.color:C.mut}/>
+          <span style={{flex:1,fontSize:14,color: view===v.id?C.txt:C.sub,fontWeight: view===v.id?550:450}}>{v.label}</span>
+          {v.n>0 && <span style={{fontSize:12,color:C.mut,fontVariantNumeric:'tabular-nums'}}>{v.n}</span>}
+        </button>
+      ))}
+
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'18px 10px 8px'}}>
+        <span style={{fontSize:11,fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:C.faint}}>Projekte</span>
+        <button onClick={onAddProject} style={{...iconBtn,padding:3}}><IcPlus size={15} color={C.mut}/></button>
+      </div>
+      <div style={{flex:1,overflowY:'auto'}}>
+        {projects.map(p=>{
+          const n = count(x=> x.projectId===p.id);
+          const vid = 'proj:'+p.id;
+          return (
+            <button key={p.id} onClick={()=>setView(vid)} onDoubleClick={()=>onEditProject(p)} className="proj-hover"
+              style={{display:'flex',alignItems:'center',gap:11,padding:'9px 10px',borderRadius:10,border:'none',
+                background: view===vid?C.surf2:'transparent',cursor:'pointer',marginBottom:2,width:'100%',textAlign:'left'}}>
+              <span style={{fontSize:16,width:18,textAlign:'center'}}>{p.emoji}</span>
+              <span style={{flex:1,fontSize:14,color: view===vid?C.txt:C.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</span>
+              {n>0 && <span style={{fontSize:12,color:C.mut}}>{n}</span>}
+            </button>
+          );
+        })}
+        {projects.length===0 && <div style={{fontSize:12.5,color:C.faint,padding:'8px 10px',lineHeight:1.5}}>Noch keine Projekte. Klick auf + um eins anzulegen.</div>}
+      </div>
+
+      <div style={{borderTop:'1px solid '+C.sep,marginTop:8,paddingTop:10}}>
+        <div style={{fontSize:11,color:C.faint,padding:'0 10px 8px'}}>Tipp: „Claude, leg einen Task an …"</div>
+        <div style={{display:'flex',alignItems:'center',gap:8,padding:'0 10px'}}>
+          <div style={{width:24,height:24,borderRadius:'50%',background:C.surf2,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:600,color:C.pri,flexShrink:0}}>
+            {(session&&session.user&&session.user.email||'?').slice(0,1).toUpperCase()}
+          </div>
+          <span style={{flex:1,fontSize:11.5,color:C.mut,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{session&&session.user&&session.user.email}</span>
+          <button onClick={()=>sb.auth.signOut()} title="Abmelden" style={{background:'none',border:'none',color:C.mut,fontSize:11.5,cursor:'pointer',fontFamily:FONT,padding:'4px 6px'}}>Abmelden</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════ Project Modal ══════════════ */
+function ProjectModal({project, onSave, onDelete, onClose}){
+  const [name,setName]=useState(project?.name||'');
+  const [emoji,setEmoji]=useState(project?.emoji||'📁');
+  const [color,setColor]=useState(project?.color||PROJECT_COLORS[0]);
+  return (
+    <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',zIndex:90,display:'flex',alignItems:'center',justifyContent:'center',animation:'fadeIn .18s ease'}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:380,background:C.surf,border:'1px solid '+C.bdr,borderRadius:22,padding:26,animation:'popIn .2s ease'}}>
+        <div style={{fontSize:16,fontWeight:600,color:C.txt,marginBottom:20}}>{project?'Projekt bearbeiten':'Neues Projekt'}</div>
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Projektname" autoFocus onKeyDown={e=>e.key==='Enter'&&name.trim()&&onSave({id:project?.id||('p_'+uid()),name:name.trim(),emoji,color})}
+          style={{width:'100%',background:C.surf2,border:'1px solid '+C.bdr,borderRadius:10,padding:'11px 13px',color:C.txt,fontSize:15,outline:'none',marginBottom:18}}/>
+        <div style={{fontSize:12,color:C.mut,marginBottom:8}}>Symbol</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:18}}>
+          {EMOJIS.map(e=><button key={e} onClick={()=>setEmoji(e)} style={{width:36,height:36,borderRadius:9,fontSize:18,border:'1px solid '+(emoji===e?C.pri:C.bdr),background:emoji===e?C.priL:C.surf2,cursor:'pointer'}}>{e}</button>)}
+        </div>
+        <div style={{fontSize:12,color:C.mut,marginBottom:8}}>Farbe</div>
+        <div style={{display:'flex',gap:9,marginBottom:24}}>
+          {PROJECT_COLORS.map(c=><button key={c} onClick={()=>setColor(c)} style={{width:30,height:30,borderRadius:'50%',background:c,border: color===c?'2px solid #fff':'2px solid transparent',cursor:'pointer'}}/>)}
+        </div>
+        <div style={{display:'flex',gap:10}}>
+          {project && <button onClick={()=>onDelete(project.id)} style={{...btnGhost,color:C.red}}><IcTrash size={16}/></button>}
+          <button onClick={onClose} style={{...btnGhost,flex:1,justifyContent:'center'}}>Abbrechen</button>
+          <button onClick={()=>name.trim()&&onSave({id:project?.id||('p_'+uid()),name:name.trim(),emoji,color})} style={{...btnPri,flex:1,justifyContent:'center'}}>Speichern</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════ App ══════════════ */
+/* ══════════════ Splash / Login ══════════════ */
+function Splash({text}){
+  return <div style={{position:'fixed',inset:0,background:C.bg,display:'flex',flexDirection:'column',gap:14,alignItems:'center',justifyContent:'center',color:C.sub,fontFamily:FONT,fontSize:14}}>
+    <div style={{width:34,height:34,borderRadius:10,background:C.pri,display:'flex',alignItems:'center',justifyContent:'center',animation:'pulse 1.4s ease infinite'}}><IcCheck size={20} color={C.priTxt} stroke={3}/></div>
+    {text}
+  </div>;
+}
+function Login(){
+  const [email,setEmail]=useState(''); const [pw,setPw]=useState(''); const [err,setErr]=useState(''); const [busy,setBusy]=useState(false);
+  const submit=async e=>{
+    e.preventDefault(); setBusy(true); setErr('');
+    const {error}=await sb.auth.signInWithPassword({email:email.trim(),password:pw});
+    if(error){ setErr('Login fehlgeschlagen. E-Mail und Passwort prüfen.'); setBusy(false); }
+  };
+  const inp={width:'100%',background:C.surf3,border:'none',borderRadius:10,color:C.txt,padding:'11px 13px',fontSize:14,outline:'none',fontFamily:'inherit'};
+  return (
+    <div style={{position:'fixed',inset:0,background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:FONT,padding:20}}>
+      <form onSubmit={submit} style={{width:'100%',maxWidth:350,background:C.surf,borderRadius:20,padding:30,border:'1px solid '+C.bdr}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}>
+          <div style={{width:32,height:32,borderRadius:9,background:C.pri,display:'flex',alignItems:'center',justifyContent:'center'}}><IcCheck size={19} color={C.priTxt} stroke={3}/></div>
+          <div><div style={{fontSize:20,fontWeight:700,color:C.txt,letterSpacing:'-0.02em',lineHeight:1}}>To-Do</div></div>
+        </div>
+        <div style={{fontSize:13,color:C.sub,marginBottom:22}}>Mit deinem Konto einloggen <span style={{color:C.faint}}>(gleicher Login wie SP Finanz)</span></div>
+        <label style={{fontSize:12,color:C.sub,display:'block',marginBottom:6}}>E-Mail</label>
+        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoFocus required style={{...inp,marginBottom:14}}/>
+        <label style={{fontSize:12,color:C.sub,display:'block',marginBottom:6}}>Passwort</label>
+        <input type="password" value={pw} onChange={e=>setPw(e.target.value)} required style={{...inp,marginBottom:err?10:18}}/>
+        {err && <div style={{fontSize:12,color:C.red,marginBottom:14}}>{err}</div>}
+        <button type="submit" disabled={busy} style={{width:'100%',background:C.pri,color:C.priTxt,border:'none',borderRadius:12,padding:'12px',fontSize:14,fontWeight:700,cursor:busy?'default':'pointer',fontFamily:'inherit',opacity:busy?.6:1}}>
+          {busy?'Wird eingeloggt…':'Einloggen'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function App({session}){
+  const [state, setState] = useState(null);
+  const [ready, setReady] = useState(false);
+  const [toast, setToast] = useState('');
+  const [view, setView] = useState('today');
+  const [selId, setSelId] = useState(null);
+  const [focusTask, setFocusTask] = useState(null);
+  const [projModal, setProjModal] = useState(null);   // {project} | {new:true} | null
+  const [quick, setQuick] = useState('');
+  const [showDone, setShowDone] = useState(false);
+  const [panelW, setPanelW] = useState(()=>{ const w=parseInt(localStorage.getItem('todo-panelw')); return (w&&w>=360)?w:440; });
+  const savedRef = useRef(true);
+  const sigRef = useRef('');
+  const t = todayStr();
+
+  /* Laden aus Supabase (einmalig, mit Migration lokaler Daten) */
+  useEffect(()=>{
+    let active=true;
+    (async()=>{
+      const {data:row,error}=await sb.from('todo_state').select('data').eq('id',1).single();
+      if(!active) return;
+      let d;
+      if(error){ d = load(); setToast('Offline – nur lokal gespeichert'); }
+      else {
+        d = (row && row.data) || {};
+        if(!d || !d.tasks){
+          try{ const raw=localStorage.getItem(STORE_KEY); if(raw){ const p=JSON.parse(raw); if(p&&p.tasks) d=p; } }catch{}
+          if(!d || !d.tasks) d = seed();
+        }
+      }
+      if(!('events' in d)) d.events = seedEvents();
+      sigRef.current = JSON.stringify(d);
+      setState(d); setReady(true);
+    })();
+    return ()=>{active=false;};
+  },[]);
+
+  /* Speichern nach Supabase (debounced) + lokales Backup */
+  useEffect(()=>{
+    if(!ready || !state) return;
+    savedRef.current=false;
+    const tmr=setTimeout(async()=>{
+      const sig=JSON.stringify(state);
+      const {error}=await sb.from('todo_state').update({data:state,updated_at:new Date().toISOString()}).eq('id',1);
+      if(error){ setToast('Speichern fehlgeschlagen'); } else { sigRef.current=sig; }
+      try{ localStorage.setItem(STORE_KEY, sig); }catch{}
+      savedRef.current=true;
+    },600);
+    return ()=>clearTimeout(tmr);
+  },[state,ready]);
+
+  /* Live-Sync von anderen Geräten */
+  useEffect(()=>{
+    const ch=sb.channel('todo_state_rt').on('postgres_changes',{event:'UPDATE',schema:'public',table:'todo_state'},(payload)=>{
+      const row=payload.new; if(!row||!row.data) return;
+      const sig=JSON.stringify(row.data);
+      if(sig===sigRef.current) return;     // eigenes Echo
+      if(!savedRef.current) return;        // lokale Eingabe läuft
+      sigRef.current=sig; setState(row.data); setToast('🔄 Von einem anderen Gerät aktualisiert');
+    }).subscribe();
+    return ()=>{ try{sb.removeChannel(ch);}catch{} };
+  },[]);
+
+  useEffect(()=>{ try{ localStorage.setItem('todo-panelw',panelW); }catch{} },[panelW]);
+  useEffect(()=>{ if(!toast) return; const tt=setTimeout(()=>setToast(''),3400); return ()=>clearTimeout(tt); },[toast]);
+
+  const filtered = useMemo(()=>{
+    const tasks = (state&&state.tasks) || [];
+    let f = tasks;
+    if(view==='today') f = tasks.filter(x=> x.due && x.due<=t);
+    else if(view==='upcoming') f = tasks.filter(x=> x.due && x.due>t);
+    else if(view==='important') f = tasks.filter(x=> x.priority);
+    else if(view==='inbox') f = tasks.filter(x=> !x.projectId);
+    else if(view==='all') f = tasks;
+    else if(view.startsWith('proj:')){ const pid=view.slice(5); f = tasks.filter(x=> x.projectId===pid); }
+    const open = f.filter(x=>!x.done), done = f.filter(x=>x.done);
+    const sort = (a,b)=> (b.priority-a.priority) || ((a.due||'9')<(b.due||'9')?-1:1);
+    return {open: open.sort(sort), done: done.sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))};
+  },[state,view,t]);
+
+  if(!ready || !state) return <Splash text="Aufgaben werden geladen…" />;
+
+  const {projects, tasks} = state;
+  const events = state.events||[];
+  const projById = (id)=> projects.find(p=>p.id===id);
+
+  const setTask = (nt) => setState(s=>({...s, tasks: s.tasks.map(x=>x.id===nt.id?nt:x)}));
+  const toggle = (id) => setState(s=>({...s, tasks: s.tasks.map(x=>x.id===id?{...x,done:!x.done,completedAt:!x.done?Date.now():null}:x)}));
+  const delTask = (id) => { setState(s=>({...s, tasks: s.tasks.filter(x=>x.id!==id)})); if(selId===id) setSelId(null); };
+  const completeFromFocus = (id) => setState(s=>({...s, tasks: s.tasks.map(x=>x.id===id?{...x,done:true,completedAt:Date.now()}:x)}));
+
+  const addQuick = () => {
+    const title = quick.trim(); if(!title) return;
+    const pid = view.startsWith('proj:')? view.slice(5) : null;
+    const due = (view==='today')? t : null;
+    const priority = view==='important';
+    const nt = {id:uid(), projectId:pid, title, done:false, desc:'', links:[], notes:'', due, priority, sub:[], createdAt:Date.now(), completedAt:null, source:'manual', estMin:25};
+    setState(s=>({...s, tasks:[nt, ...s.tasks]})); setQuick('');
+  };
+
+  const saveProject = (p) => { setState(s=> s.projects.find(x=>x.id===p.id)? {...s,projects:s.projects.map(x=>x.id===p.id?p:x)} : {...s,projects:[...s.projects,p]}); setProjModal(null); setView('proj:'+p.id); };
+  const delProject = (id) => { setState(s=>({...s, projects:s.projects.filter(p=>p.id!==id), tasks:s.tasks.map(x=>x.projectId===id?{...x,projectId:null}:x)})); setProjModal(null); setView('today'); };
+
+  const sel = tasks.find(x=>x.id===selId);
+  const viewMeta = {today:{t:'Heute',s:greeting()+'! Das steht heute an.'},upcoming:{t:'Demnächst',s:'Was in den nächsten Tagen ansteht.'},calendar:{t:'Termine',s:'Deine Meetings & Termine aus Google Kalender.'},important:{t:'Wichtig',s:'Deine markierten Prioritäten.'},inbox:{t:'Eingang',s:'Unsortiert – auch aus Gmail & von Claude.'},all:{t:'Alle Aufgaben',s:'Alles auf einen Blick.'}}[view]
+    || (view.startsWith('proj:')? (()=>{const p=projById(view.slice(5)); return {t:(p?.emoji+' '+p?.name)||'Projekt',s:'',proj:p};})() : {t:'',s:''});
+
+  // Progress today
+  const todayTasks = tasks.filter(x=> x.due===t || (x.completedAt && new Date(x.completedAt).toDateString()===new Date().toDateString()));
+  const doneToday = todayTasks.filter(x=>x.done).length, totToday = todayTasks.length;
+  const pctToday = totToday? Math.round(doneToday/totToday*100):0;
+  const todayEvents = events.filter(e=>e.date===t).sort((a,b)=>(a.start||'').localeCompare(b.start||''));
+
+  return (
+    <div style={{display:'flex',height:'100vh',width:'100vw',background:C.bg,fontFamily:FONT,color:C.txt,overflow:'hidden'}}>
+      <Sidebar view={view} setView={(v)=>{setView(v);setSelId(null);}} projects={projects} tasks={tasks} events={events} session={session}
+        onAddProject={()=>setProjModal({new:true})} onEditProject={(p)=>setProjModal({project:p})}/>
+
+      {/* Main */}
+      <div style={{flex:1,minWidth:0,height:'100%',display:'flex',flexDirection:'column'}}>
+        <div style={{padding:'24px 30px 16px',borderBottom:'1px solid '+C.sep}}>
+          <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:20}}>
+            <div>
+              <h1 style={{fontSize:25,fontWeight:700,letterSpacing:'-0.025em',marginBottom:4}}>{viewMeta.t}</h1>
+              {viewMeta.s && <div style={{fontSize:13.5,color:C.mut}}>{viewMeta.s}</div>}
+            </div>
+            {view==='today' && totToday>0 &&
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:12.5,color:C.mut,marginBottom:6}}>{doneToday} von {totToday} erledigt</div>
+                <div style={{width:160,height:7,background:C.surf3,borderRadius:4,overflow:'hidden'}}>
+                  <div style={{width:'100%',height:'100%',background:C.pri,borderRadius:4,transformOrigin:'left',transform:`scaleX(${pctToday/100})`,transition:'transform .4s ease'}}/>
+                </div>
+                {pctToday===100 && <div style={{fontSize:12,color:C.pri,marginTop:6,fontWeight:600}}>Alles erledigt! 🎉</div>}
+              </div>}
+          </div>
+        </div>
+
+        <div style={{flex:1,display:'flex',minHeight:0}}>
+          <div style={{flex:1,minWidth:0,overflowY:'auto',padding:'18px 30px 40px'}}>
+           {view==='calendar' ? <CalendarView events={events} t={t}/> : <React.Fragment>
+            {/* Quick add */}
+            <div style={{display:'flex',alignItems:'center',gap:11,padding:'12px 14px',background:C.surf,border:'1px solid '+C.bdr,borderRadius:12,marginBottom:14}}>
+              <IcPlus size={18} color={C.pri}/>
+              <input value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addQuick()}
+                placeholder={view.startsWith('proj:')? 'Aufgabe in dieses Projekt …' : 'Neue Aufgabe — Enter zum Hinzufügen'}
+                style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.txt,fontSize:14.5}}/>
+              {quick.trim() && <button onClick={addQuick} style={{...btnPri,padding:'7px 14px'}}>Hinzufügen</button>}
+            </div>
+
+            {view==='today' && todayEvents.length>0 &&
+              <div style={{marginBottom:18}}>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:C.blu,margin:'4px 2px 9px',display:'flex',alignItems:'center',gap:6}}><IcClock size={13}/>Termine heute</div>
+                {todayEvents.map(ev=><EventCard key={ev.id} ev={ev}/>)}
+              </div>}
+
+            {filtered.open.length===0 && filtered.done.length===0 &&
+              <div style={{textAlign:'center',padding:'70px 20px',color:C.faint}}>
+                <div style={{fontSize:44,marginBottom:12}}>🌿</div>
+                <div style={{fontSize:15,color:C.sub,marginBottom:4}}>Nichts hier.</div>
+                <div style={{fontSize:13}}>Füg oben eine Aufgabe hinzu — oder sag Claude, was zu tun ist.</div>
+              </div>}
+
+            {filtered.open.map(task=>(
+              <TaskRow key={task.id} task={task} project={projById(task.projectId)} active={selId===task.id}
+                onToggle={()=>toggle(task.id)} onClick={()=>setSelId(task.id)} onFocus={setFocusTask}/>
+            ))}
+
+            {filtered.done.length>0 &&
+              <div style={{marginTop:18}}>
+                <button onClick={()=>setShowDone(v=>!v)} style={{display:'flex',alignItems:'center',gap:7,background:'none',border:'none',color:C.mut,fontSize:12.5,cursor:'pointer',padding:'6px 8px',fontFamily:'inherit'}}>
+                  <IcChevron size={14} style={{transform:showDone?'rotate(90deg)':'none',transition:'.15s'}}/>
+                  Erledigt · {filtered.done.length}
+                </button>
+                {showDone && filtered.done.map(task=>(
+                  <TaskRow key={task.id} task={task} project={projById(task.projectId)} active={selId===task.id}
+                    onToggle={()=>toggle(task.id)} onClick={()=>setSelId(task.id)} onFocus={setFocusTask}/>
+                ))}
+              </div>}
+           </React.Fragment>}
+          </div>
+
+          {sel && <Detail task={sel} project={projById(sel.projectId)} onChange={setTask} onClose={()=>setSelId(null)} onDelete={delTask} onFocus={setFocusTask} width={panelW} onResize={setPanelW}/>}
+        </div>
+      </div>
+
+      {focusTask && <FocusModal task={tasks.find(x=>x.id===focusTask.id)||focusTask} onClose={()=>setFocusTask(null)} onComplete={completeFromFocus}/>}
+      {projModal && <ProjectModal project={projModal.project} onSave={saveProject} onDelete={delProject} onClose={()=>setProjModal(null)}/>}
+      {toast && <div style={{position:'fixed',bottom:22,left:'50%',transform:'translateX(-50%)',background:C.surf2,border:'1px solid '+C.bdrM,color:C.txt,fontSize:13,padding:'10px 18px',borderRadius:12,zIndex:120,boxShadow:'0 8px 28px rgba(0,0,0,.5)',animation:'popIn .2s ease'}}>{toast}</div>}
+    </div>
+  );
+}
+
+/* ══════════════ Style atoms ══════════════ */
+const btnPri  = {display:'flex',alignItems:'center',gap:8,background:C.pri,color:C.priTxt,border:'none',borderRadius:10,padding:'9px 16px',fontSize:13.5,fontWeight:600,cursor:'pointer',fontFamily:FONT};
+const btnGhost= {display:'flex',alignItems:'center',gap:8,background:C.surf2,color:C.txt,border:'1px solid '+C.bdr,borderRadius:10,padding:'9px 16px',fontSize:13.5,fontWeight:500,cursor:'pointer',fontFamily:FONT};
+const btnBlu  = {display:'flex',alignItems:'center',gap:8,background:C.bluL,color:C.blu,border:'none',borderRadius:10,padding:'9px 16px',fontSize:13.5,fontWeight:600,cursor:'pointer',fontFamily:FONT};
+const iconBtn = {display:'flex',alignItems:'center',justifyContent:'center',background:'none',border:'none',cursor:'pointer',padding:5,borderRadius:7};
+const chip    = {position:'relative',display:'flex',alignItems:'center',gap:6,background:C.surf2,border:'1px solid '+C.bdr,borderRadius:9,padding:'7px 11px',fontSize:12.5,color:C.sub,cursor:'pointer',fontFamily:FONT};
+
+/* ══════════════ Root: Login-Gate ══════════════ */
+function Root(){
+  const [session,setSession]=useState(undefined);
+  useEffect(()=>{
+    sb.auth.getSession().then(({data})=>setSession(data.session||null));
+    const {data:sub}=sb.auth.onAuthStateChange((_e,s)=>setSession(s));
+    return ()=>{ try{sub.subscription.unsubscribe();}catch(e){} };
+  },[]);
+  if(session===undefined) return <Splash text="Wird geladen…" />;
+  if(!session) return <Login/>;
+  return <App session={session}/>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Root/>);
+</script>
+</body>
+</html>
