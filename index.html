@@ -113,10 +113,16 @@ function applyInbox(data, inbox){
       seen.add(key); nTask++;
     } else if(r.kind==='event'){
       const eid=p.id||r.ext_id||uid();
-      if(seen.has('ev:'+eid)) return;                        // einmal entfernter Termin bleibt entfernt
       const exists = d.events.some(e=>e.id===eid);
       d.events=[...d.events.filter(e=>e.id!==eid),{id:eid,title:p.title||'Termin',date:p.date,start:p.start||'',end:p.end||'',source:'gcal',location:p.location||'',link:p.link||'',meet:p.meet||''}];
       if(!exists) nEv++;
+    } else if(r.kind==='events_sync'){
+      // Voller Schnappschuss des Kalenders: künftige gcal-Termine GENAU spiegeln
+      const today=todayStr();
+      const list=(p.events||[]).map(e=>({id:e.id,title:e.title||'Termin',date:e.date,start:e.start||'',end:e.end||'',source:'gcal',location:e.location||'',link:e.link||'',meet:e.meet||''}));
+      const before=d.events.length;
+      d.events=[...d.events.filter(e=> e.source!=='gcal' || (e.date||'')<today), ...list];
+      nEv += Math.max(0, d.events.length - before);
     }
   });
   d.seenExt = Array.from(seen);
