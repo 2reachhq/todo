@@ -31,6 +31,8 @@
     @keyframes checkPop { 0% { transform:scale(.5) } 60% { transform:scale(1.18) } 100% { transform:scale(1) } }
     .row-hover:hover { background: #1E1E1E !important; }
     .proj-hover:hover { background: rgba(255,255,255,0.05) !important; }
+    .proj-edit { opacity: 0; transition: opacity .14s ease; }
+    .proj-row:hover .proj-edit { opacity: 1; }
   </style>
 </head>
 <body>
@@ -88,20 +90,8 @@ const greeting = () => { const h=new Date().getHours(); return h<11?'Guten Morge
 
 /* ══════════════ Persistence ══════════════ */
 const STORE_KEY = 'todo-v1';
-const seedEvents = () => [
-  {id:uid(), title:'Team Sync', date:todayStr(), start:'10:00', end:'10:30', source:'gcal', location:'Google Meet', link:''},
-  {id:uid(), title:'Mittagessen mit Kunde', date:todayStr(), start:'12:30', end:'13:30', source:'gcal', location:'', link:''},
-];
-const seed = () => ({
-  projects: [
-    {id:'p_demo', name:'Beispiel-Projekt', emoji:'🚀', color:'#3ECF8E'},
-  ],
-  tasks: [
-    {id:uid(), projectId:'p_demo', title:'Willkommen! Klick mich an ←', done:false, desc:'Hier siehst du Beschreibung, Links, Notizen und das Datum. Probier den ▶ Start-Knopf für den Fokus-Timer.', links:[], notes:'', due:todayStr(), priority:true, sub:[{id:uid(),title:'Auf den Kreis klicken = erledigt',done:false},{id:uid(),title:'Auf ▶ klicken = Fokus starten',done:false}], createdAt:Date.now(), completedAt:null, source:'manual', estMin:25},
-    {id:uid(), projectId:null, title:'Task ohne Projekt landet im Eingang', done:false, desc:'', links:[], notes:'', due:null, priority:false, sub:[], createdAt:Date.now(), completedAt:null, source:'manual', estMin:25},
-  ],
-  events: seedEvents(),
-});
+const seedEvents = () => [];
+const seed = () => ({ projects: [], tasks: [], events: [] });
 const load = () => { try { const r=localStorage.getItem(STORE_KEY); if(!r) return seed(); const s=JSON.parse(r); if(!('events' in s)) s.events = seedEvents(); return s; } catch { return seed(); } };
 const save = (s) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {} };
 
@@ -124,6 +114,8 @@ const IcStack = (p)=><Icon {...p} d={<g><polyline points="22 12 16 12 14 15 10 1
 const IcPause = (p)=><Icon {...p} d={<g><rect x="6" y="4" width="4" height="16" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" fill="currentColor" stroke="none"/></g>}/>;
 const IcCoffee= (p)=><Icon {...p} d={<g><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></g>}/>;
 const IcClock = (p)=><Icon {...p} d={<g><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></g>}/>;
+const IcEdit  = (p)=><Icon {...p} d={<g><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></g>}/>;
+const IcMail  = (p)=><Icon {...p} d={<g><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,6 12,13 2,6"/></g>}/>;
 const IcPin   = (p)=><Icon {...p} d={<g><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></g>}/>;
 
 /* ══════════════ Focus / Pomodoro Modal ══════════════ */
@@ -258,9 +250,14 @@ function Detail({task, project, onChange, onClose, onDelete, onFocus, width, onR
             onInput={e=>{e.target.style.height='auto';e.target.style.height=e.target.scrollHeight+'px';}}/>
         </div>
 
-        <button onClick={()=>onFocus(task)} style={{...btnPri, width:'100%', justifyContent:'center', marginBottom:18, padding:'11px'}}>
+        <button onClick={()=>onFocus(task)} style={{...btnPri, width:'100%', justifyContent:'center', marginBottom:10, padding:'11px'}}>
           <IcPlay size={15}/><span>Fokus starten · {task.estMin||25} Min</span>
         </button>
+        {task.source==='gmail' && task.extId &&
+          <a href={`https://mail.google.com/mail/u/0/#all/${task.extId}`} target="_blank"
+            style={{...btnGhost, width:'100%', justifyContent:'center', marginBottom:18, color:C.blu, textDecoration:'none'}}>
+            <IcMail size={15}/><span>E-Mail in Gmail öffnen</span>
+          </a>}
 
         {/* Meta row */}
         <div style={{display:'flex',gap:8,marginBottom:18,flexWrap:'wrap'}}>
@@ -493,13 +490,15 @@ function Sidebar({view, setView, projects, tasks, events, session, onAddProject,
           const n = count(x=> x.projectId===p.id);
           const vid = 'proj:'+p.id;
           return (
-            <button key={p.id} onClick={()=>setView(vid)} onDoubleClick={()=>onEditProject(p)} className="proj-hover"
-              style={{display:'flex',alignItems:'center',gap:11,padding:'9px 10px',borderRadius:10,border:'none',
-                background: view===vid?C.surf2:'transparent',cursor:'pointer',marginBottom:2,width:'100%',textAlign:'left'}}>
+            <div key={p.id} onClick={()=>setView(vid)} onDoubleClick={()=>onEditProject(p)} className="proj-hover proj-row"
+              style={{display:'flex',alignItems:'center',gap:11,padding:'9px 10px',borderRadius:10,
+                background: view===vid?C.surf2:'transparent',cursor:'pointer',marginBottom:2,width:'100%'}}>
               <span style={{fontSize:16,width:18,textAlign:'center'}}>{p.emoji}</span>
-              <span style={{flex:1,fontSize:14,color: view===vid?C.txt:C.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</span>
+              <span style={{flex:1,minWidth:0,fontSize:14,color: view===vid?C.txt:C.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</span>
+              <button className="proj-edit" onClick={e=>{e.stopPropagation(); onEditProject(p);}} title="Bearbeiten / Umbenennen / Löschen"
+                style={{background:'none',border:'none',cursor:'pointer',padding:2,display:'flex'}}><IcEdit size={14} color={C.mut}/></button>
               {n>0 && <span style={{fontSize:12,color:C.mut}}>{n}</span>}
-            </button>
+            </div>
           );
         })}
         {projects.length===0 && <div style={{fontSize:12.5,color:C.faint,padding:'8px 10px',lineHeight:1.5}}>Noch keine Projekte. Klick auf + um eins anzulegen.</div>}
@@ -524,12 +523,16 @@ function ProjectModal({project, onSave, onDelete, onClose}){
   const [name,setName]=useState(project?.name||'');
   const [emoji,setEmoji]=useState(project?.emoji||'📁');
   const [color,setColor]=useState(project?.color||PROJECT_COLORS[0]);
+  const [desc,setDesc]=useState(project?.desc||'');
+  const build = () => ({id:project?.id||('p_'+uid()), name:name.trim(), emoji, color, desc:desc.trim()});
   return (
     <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',zIndex:90,display:'flex',alignItems:'center',justifyContent:'center',animation:'fadeIn .18s ease'}}>
       <div onClick={e=>e.stopPropagation()} style={{width:380,background:C.surf,border:'1px solid '+C.bdr,borderRadius:22,padding:26,animation:'popIn .2s ease'}}>
         <div style={{fontSize:16,fontWeight:600,color:C.txt,marginBottom:20}}>{project?'Projekt bearbeiten':'Neues Projekt'}</div>
-        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Projektname" autoFocus onKeyDown={e=>e.key==='Enter'&&name.trim()&&onSave({id:project?.id||('p_'+uid()),name:name.trim(),emoji,color})}
-          style={{width:'100%',background:C.surf2,border:'1px solid '+C.bdr,borderRadius:10,padding:'11px 13px',color:C.txt,fontSize:15,outline:'none',marginBottom:18}}/>
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Projektname" autoFocus onKeyDown={e=>e.key==='Enter'&&name.trim()&&onSave(build())}
+          style={{width:'100%',background:C.surf2,border:'1px solid '+C.bdr,borderRadius:10,padding:'11px 13px',color:C.txt,fontSize:15,outline:'none',marginBottom:14}}/>
+        <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Beschreibung (optional)" rows={2}
+          style={{width:'100%',background:C.surf2,border:'1px solid '+C.bdr,borderRadius:10,padding:'10px 13px',color:C.txt,fontSize:13.5,lineHeight:1.5,outline:'none',marginBottom:18,resize:'none'}}/>
         <div style={{fontSize:12,color:C.mut,marginBottom:8}}>Symbol</div>
         <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:18}}>
           {EMOJIS.map(e=><button key={e} onClick={()=>setEmoji(e)} style={{width:36,height:36,borderRadius:9,fontSize:18,border:'1px solid '+(emoji===e?C.pri:C.bdr),background:emoji===e?C.priL:C.surf2,cursor:'pointer'}}>{e}</button>)}
@@ -541,7 +544,7 @@ function ProjectModal({project, onSave, onDelete, onClose}){
         <div style={{display:'flex',gap:10}}>
           {project && <button onClick={()=>onDelete(project.id)} style={{...btnGhost,color:C.red}}><IcTrash size={16}/></button>}
           <button onClick={onClose} style={{...btnGhost,flex:1,justifyContent:'center'}}>Abbrechen</button>
-          <button onClick={()=>name.trim()&&onSave({id:project?.id||('p_'+uid()),name:name.trim(),emoji,color})} style={{...btnPri,flex:1,justifyContent:'center'}}>Speichern</button>
+          <button onClick={()=>name.trim()&&onSave(build())} style={{...btnPri,flex:1,justifyContent:'center'}}>Speichern</button>
         </div>
       </div>
     </div>
@@ -640,6 +643,13 @@ function App({session}){
         }catch(e){}
       }
       if(!('events' in d)) d.events = seedEvents();
+      // Einmalige Bereinigung der früheren Beispiel-/Testdaten
+      if(!d.cleaned1){
+        d.projects = (d.projects||[]).filter(p=>p.id!=='p_demo');
+        d.tasks = (d.tasks||[]).filter(x=> x.projectId!=='p_demo' && !['Willkommen! Klick mich an ←','Task ohne Projekt landet im Eingang'].includes(x.title));
+        d.events = (d.events||[]).filter(e=> e.id!=='__selftest__' && !['Team Sync','Mittagessen mit Kunde'].includes(e.title));
+        d.cleaned1 = true;
+      }
       sigRef.current = JSON.stringify(d);
       setState(d); setReady(true);
     })();
@@ -714,7 +724,7 @@ function App({session}){
 
   const sel = tasks.find(x=>x.id===selId);
   const viewMeta = {today:{t:'Heute',s:greeting()+'! Das steht heute an.'},upcoming:{t:'Demnächst',s:'Was in den nächsten Tagen ansteht.'},calendar:{t:'Termine',s:'Deine Meetings & Termine aus Google Kalender.'},important:{t:'Wichtig',s:'Deine markierten Prioritäten.'},inbox:{t:'Eingang',s:'Unsortiert – auch aus Gmail & von Claude.'},all:{t:'Alle Aufgaben',s:'Alles auf einen Blick.'}}[view]
-    || (view.startsWith('proj:')? (()=>{const p=projById(view.slice(5)); return {t:(p?.emoji+' '+p?.name)||'Projekt',s:'',proj:p};})() : {t:'',s:''});
+    || (view.startsWith('proj:')? (()=>{const p=projById(view.slice(5)); return {t:(p?.emoji+' '+p?.name)||'Projekt',s:p?.desc||'',proj:p};})() : {t:'',s:''});
 
   // Progress today
   const todayTasks = tasks.filter(x=> x.due===t || (x.completedAt && new Date(x.completedAt).toDateString()===new Date().toDateString()));
