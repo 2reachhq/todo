@@ -698,6 +698,21 @@ function App({session}){
     return ()=>{ try{sb.removeChannel(ch);}catch{} };
   },[]);
 
+  /* Live: neue Einträge vom Scan (Gmail/Kalender) sofort übernehmen */
+  useEffect(()=>{
+    const ch=sb.channel('todo_inbox_rt').on('postgres_changes',{event:'INSERT',schema:'public',table:'todo_inbox'},async ()=>{
+      try{
+        const {data:inbox}=await sb.from('todo_inbox').select('*').eq('processed',false).order('created_at',{ascending:true});
+        if(!inbox || !inbox.length) return;
+        await sb.from('todo_inbox').update({processed:true}).in('id',inbox.map(x=>x.id));
+        let c={nTask:0,nEv:0};
+        setState(prev=>{ const r=applyInbox(prev||{tasks:[],events:[]}, inbox); c={nTask:r.nTask,nEv:r.nEv}; return r.d; });
+        setTimeout(()=>setToast(`📥 ${c.nTask} Aufgabe(n)${c.nEv?` · ${c.nEv} Termin(e)`:''} übernommen`),50);
+      }catch(e){}
+    }).subscribe();
+    return ()=>{ try{sb.removeChannel(ch);}catch{} };
+  },[]);
+
   useEffect(()=>{ try{ localStorage.setItem('todo-panelw',panelW); }catch{} },[panelW]);
   useEffect(()=>{ if(!toast) return; const tt=setTimeout(()=>setToast(''),3400); return ()=>clearTimeout(tt); },[toast]);
 
@@ -723,14 +738,17 @@ function App({session}){
 
   const syncInbox = async () => {
     if(syncing) return; setSyncing(true);
+    // 1) frischen Gmail-/Kalender-Scan anfordern (läuft Claude-seitig, sobald die App offen ist)
+    try{ await sb.from('scan_requests').update({requested_at:new Date().toISOString()}).eq('id',1); }catch(e){}
+    // 2) sofort abholen, was schon im Eingang liegt
     try{
-      const {data:inbox,error}=await sb.from('todo_inbox').select('*').eq('processed',false).order('created_at',{ascending:true});
-      if(error){ setToast('Aktualisieren fehlgeschlagen'); }
-      else if(!inbox || !inbox.length){ setToast('Schon aktuell ✓'); }
-      else {
-        const r=applyInbox(state, inbox); setState(r.d);
+      const {data:inbox}=await sb.from('todo_inbox').select('*').eq('processed',false).order('created_at',{ascending:true});
+      if(inbox && inbox.length){
         await sb.from('todo_inbox').update({processed:true}).in('id',inbox.map(x=>x.id));
+        const r=applyInbox(state, inbox); setState(r.d);
         setToast(`📥 ${r.nTask} Aufgabe(n)${r.nEv?` · ${r.nEv} Termin(e)`:''} übernommen`);
+      } else {
+        setToast('Suche nach Neuem … erscheint automatisch (bis ~2 Min)');
       }
     }catch(e){ setToast('Aktualisieren fehlgeschlagen'); }
     setSyncing(false);
